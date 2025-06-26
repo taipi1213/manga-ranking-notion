@@ -1,0 +1,17 @@
+name: Daily Manga Ranking
+on:
+  schedule:
+    - cron: '0 22 * * *'   # 07:00 JST（cron は UTC 解釈）
+  workflow_dispatch:       # 手動実行ボタンも付けておくとテストに便利
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install requests beautifulsoup4
+      - run: python ranking_to_notion.py
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DB:    ${{ secrets.NOTION_DB }}
