@@ -3,7 +3,8 @@
 改訂版 2025‑06‑28
 • UA Unicode 修正
 • Select オプション自動追加
-• 400 エラー時は常に詳細を表示
+• cover 用に専用の File Object を使用（name を外す）
+• 400 エラー詳細を常時表示
 """
 
 import os, time, datetime as dt, re, sys, requests
@@ -55,7 +56,6 @@ def notion_request(method, url: str, **kw) -> requests.Response:
 # ── Select オプション保証 ─────────────────
 
 def ensure_select_option(prop: str, name: str):
-    """Select プロパティ prop に option name を動的追加。"""
     db = notion_request(requests.get, f"https://api.notion.com/v1/databases/{DB_ID}").json()
     existing = {opt["name"] for opt in db["properties"][prop]["select"]["options"]}
     if name in existing:
@@ -63,20 +63,25 @@ def ensure_select_option(prop: str, name: str):
     patch_body = {
         "properties": {
             prop: {
-                "select": {
-                    "options": db["properties"][prop]["select"]["options"] + [{"name": name}]
-                }
+                "select": {"options": db["properties"][prop]["select"]["options"] + [{"name": name}]}
             }
         }
     }
     notion_request(requests.patch, f"https://api.notion.com/v1/databases/{DB_ID}", json=patch_body)
     print(f"➕ Added option '{name}' to {prop}")
 
-# ── Page upsert ──────────────────────────
+# ── File object helpers ──────────────────
 
 def file_obj(url: str) -> Dict:
+    """For property type files – name required"""
     return {"type": "external", "name": url.split("/")[-1], "external": {"url": url}}
 
+
+def cover_obj(url: str) -> Dict:
+    """Page cover requires only type & external.url (name NG)"""
+    return {"type": "external", "external": {"url": url}}
+
+# ── Page search ──────────────────────────
 
 def query_page(store: str, cat: str, rank: int) -> List[Dict]:
     q = {
@@ -92,9 +97,9 @@ def query_page(store: str, cat: str, rank: int) -> List[Dict]:
     r = notion_request(requests.post, f"https://api.notion.com/v1/databases/{DB_ID}/query", json=q)
     return r.json().get("results", [])
 
+# ── Upsert ───────────────────────────────
 
 def upsert(row: Dict):
-    # Select 値を保証
     ensure_select_option("Store", row["store"])
     ensure_select_option("Category", row["cat"])
 
@@ -111,7 +116,7 @@ def upsert(row: Dict):
 
     body = {"properties": props}
     if img_ok:
-        body["cover"] = file_obj(row["thumb"])
+        body["cover"] = cover_obj(row["thumb"])
 
     hit = query_page(row["store"], row["cat"], row["rank"])
     if hit:
@@ -126,7 +131,7 @@ def upsert(row: Dict):
 
 def amazon_thumb(div):
     img = div.select_one("img[src]")
-    return "" if not img else re.sub(r"_AC_[^_.]+_", "_SX600_", img["src"])
+    return "" if not img else re.sub(r"_AC_[^_.]+_", "_SX600_", img["src"], 1)
 
 
 def fetch_amazon() -> Iterator[Dict]:
@@ -170,13 +175,4 @@ if __name__ == "__main__":
     try:
         for row in fetch_amazon():
             upsert(row)
-            time.sleep(0.4)
-        for cat, url in CATS:
-            for row in fetch_cmoa(cat, url):
-                upsert(row)
-                time.sleep(0.4)
-    except Exception as e:
-        print("🚨 Unexpected error:", e)
-        raise
-    finally:
-        print("=== DONE", dt.datetime.now())
+            time
