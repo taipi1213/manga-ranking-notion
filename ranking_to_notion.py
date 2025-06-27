@@ -82,18 +82,29 @@ def fetch_amazon(limit=20):
         yield {"store":"Amazon","cat":"コミック売れ筋","rank":rank,
                "title":title,"url":href,"thumb":amazon_thumb(href)}
 
-# ---------- Cmoa ----------
+# ── コミックシーモア ─────────────────────────────
 def cmoa_thumb(li):
     img = li.select_one("img[src]")
-    return urljoin("https://www.cmoa.jp", img["src"]) if img else ""
+    if not img:
+        return ""
+    url = img["src"]
+    if url.startswith("//"):
+        url = "https:" + url
+    return url
 
 def fetch_cmoa(cat, url, limit=20):
-    soup = BeautifulSoup(requests.get(url,headers=UA,timeout=10).text,"html.parser")
-    for i, li in enumerate(soup.select("ul#ranking_result_list li.search_result_box")[:limit],1):
+    soup = BeautifulSoup(requests.get(url, headers=UA, timeout=10).text, "html.parser")
+    for i, li in enumerate(soup.select("ul#ranking_result_list li.search_result_box")[:limit], 1):
         title = li.select_one("img[alt]")["alt"].strip()
         href  = urljoin("https://www.cmoa.jp", li.select_one("a.title")["href"])
-        yield {"store":"Cmoa","cat":cat,"rank":i,
-               "title":title,"url":href,"thumb":cmoa_thumb(li)}
+        yield {
+            "store": "Cmoa",
+            "cat":   cat,
+            "rank":  i,
+            "title": title,
+            "url":   href,
+            "thumb": cmoa_thumb(li)   # ← 一覧から直接
+        }
 
 CATS=[("総合","https://www.cmoa.jp/search/purpose/ranking/all/"),
       ("少年マンガ","https://www.cmoa.jp/search/purpose/ranking/boy/"),
