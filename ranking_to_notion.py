@@ -41,15 +41,27 @@ def upsert(row):
     cover = {"cover":{"type":"external","external":{"url":row["thumb"]}}}
     body  = {"properties":props, **cover}
 
+    }
+    cover = {"cover":{"type":"external","external":{"url":row["thumb"]}}}
+    body  = {"properties":props, **cover}
+
     hit = query_page(row["store"], row["cat"], row["rank"])
     if hit:
-        pid  = hit[0]["id"]
-        requests.patch(f"https://api.notion.com/v1/pages/{pid}",
-                       headers=HEAD, json=body, timeout=10).raise_for_status()
+        page_id = hit[0]["id"]
+        resp = requests.patch(
+            f"https://api.notion.com/v1/pages/{page_id}",
+            headers=HEAD, json=body, timeout=10
+        )
+        **print("Notion-API PATCH:", resp.status_code, resp.text[:300])**
+        resp.raise_for_status()
     else:
         body["parent"] = {"database_id": DB_ID}
-        requests.post("https://api.notion.com/v1/pages",
-                      headers=HEAD, json=body, timeout=10).raise_for_status()
+        resp = requests.post(
+            "https://api.notion.com/v1/pages",
+            headers=HEAD, json=body, timeout=10
+        )
+        **print("Notion-API POST :", resp.status_code, resp.text[:300])**
+        resp.raise_for_status()
 
 #── Amazon ─────────────────────────────────────────────
 from urllib.parse import urljoin
