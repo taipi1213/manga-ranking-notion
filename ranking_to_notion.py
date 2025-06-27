@@ -41,10 +41,6 @@ def upsert(row):
     cover = {"cover":{"type":"external","external":{"url":row["thumb"]}}}
     body  = {"properties":props, **cover}
 
-    }
-    cover = {"cover":{"type":"external","external":{"url":row["thumb"]}}}
-    body  = {"properties":props, **cover}
-
     hit = query_page(row["store"], row["cat"], row["rank"])
     if hit:
         page_id = hit[0]["id"]
