@@ -50,6 +50,7 @@ def _query(store, category, rank):
         f"https://api.notion.com/v1/databases/{DB_ID}/query",
         headers=HEADERS, json=payload, timeout=10
     )
+    print("Notion error:", r.status_code, r.text[:300]) 
     r.raise_for_status()
     return r.json().get("results", [])
 
