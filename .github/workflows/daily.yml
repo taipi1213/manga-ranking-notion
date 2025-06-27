@@ -1,17 +1,39 @@
-name: Daily Manga Ranking
-on:
+name: Daily Manga Ranking          # ❶ 画面に表示されるワークフロー名
+
+on:                                # ❷ トリガー設定
+  ## 毎日 07:00（JST）＝ 22:00（UTC）に自動実行
   schedule:
-    - cron: '0 22 * * *'   # 07:00 JST（cron は UTC 解釈）
-  workflow_dispatch:       # 手動実行ボタンも付けておくとテストに便利
+    - cron: '0 22 * * *'
+  ## 画面の「Run workflow」ボタンで手動実行できるようにする
+  workflow_dispatch:
+
 jobs:
-  run:
-    runs-on: ubuntu-latest
+  run:                             # ❸ ジョブ ID（自由な名前）
+    runs-on: ubuntu-latest         # ❹ GitHub が用意した Ubuntu ランナー
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - run: pip install requests beautifulsoup4
-      - run: python ranking_to_notion.py
-        env:
+      # ── A. リポジトリをチェックアウト（必須） ───────────────────────────
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # ── B. Python 3.12 をセットアップ ────────────────────────────────
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # ── C. 必要ライブラリをインストール ───────────────────────────────
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install requests beautifulsoup4 feedparser
+
+      # ── D. スクリプトを実行 ────────────────────────────────────────
+      - name: Run ranking script
+        run: python ranking_to_notion.py
+        env:                         # ❺ Secrets → 環境変数にマッピング
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DB:    ${{ secrets.NOTION_DB }}
+
+      # ── E. （任意）キャッシュやログを残したい場合はここに追記 ───────
+
