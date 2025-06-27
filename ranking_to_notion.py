@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, time, datetime as dt, requests
+import os, time, datetime as dt, requests, re
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
@@ -8,8 +8,9 @@ DB_ID = os.environ["NOTION_DB"]
 HEAD  = {"Authorization": f"Bearer {TOKEN}",
          "Notion-Version":"2022-06-28",
          "Content-Type":"application/json"}
-UA = {"User-Agent":"Mozilla/5.0","Accept-Language":"ja-JP,ja;q=0.9"}
+UA    = {"User-Agent":"Mozilla/5.0","Accept-Language":"ja-JP,ja;q=0.9"}
 TODAY = dt.date.today().isoformat()
+HTTPS_RE = re.compile(r"^https://.+\.(jpg|jpeg|png|webp)$", re.I)
 
 # ---------- Notion helper ----------
 def query_page(store, cat, rank):
@@ -24,55 +25,60 @@ def query_page(store, cat, rank):
     return r.json()["results"]
 
 def upsert(row):
-    has_thumb = row["thumb"].startswith("http")
+    # ── Thumb 判定 ──
+    has_thumb = bool(HTTPS_RE.match(row["thumb"]))
     props = {
         "Date":     {"date":{"start":TODAY}},
         "Store":    {"select":{"name":row["store"]}},
         "Category": {"select":{"name":row["cat"]}},
         "Rank":     {"number":row["rank"]},
         "Title":    {"title":[{"text":{"content":row["title"]}}]},
-        "URL":      {"url":row["url"]}
+        "URL":      {"url":row["url"]},
+        "Thumb":    {"files":[{"type":"external",
+                               "external":{"url":row["thumb"]}}]} if has_thumb else {"files":[]}
     }
-    if has_thumb:
-        props["Thumb"] = {"files":[{
-            "type":"external",
-            "external":{"url":row["thumb"]}
-        }]}
     body = {"properties":props}
     if has_thumb:
         body["cover"] = {"type":"external","external":{"url":row["thumb"]}}
 
     hit = query_page(row["store"], row["cat"], row["rank"])
-    if hit:
-        pid  = hit[0]["id"]
-        resp = requests.patch(f"https://api.notion.com/v1/pages/{pid}",
-                              headers=HEAD, json=body, timeout=10)
-    else:
-        body["parent"] = {"database_id":DB_ID}
-        resp = requests.post("https://api.notion.com/v1/pages",
-                             headers=HEAD, json=body, timeout=10)
-
-    print("Notion-API:", resp.status_code, resp.text[:120])
-    resp.raise_for_status()
+    try:
+        if hit:
+            pid  = hit[0]["id"]
+            resp = requests.patch(f"https://api.notion.com/v1/pages/{pid}",
+                                  headers=HEAD, json=body, timeout=10)
+        else:
+            body["parent"] = {"database_id":DB_ID}
+            resp = requests.post("https://api.notion.com/v1/pages",
+                                 headers=HEAD, json=body, timeout=10)
+        print("Notion:", resp.status_code, row["title"][:25])
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        # 失敗した行の詳細を表示して即デバッグ
+        print("‼️ FAILED on", row["title"][:40])
+        print(resp.text)
+        raise e
 
 # ---------- Amazon ----------
 def amazon_thumb(url):
-    soup = BeautifulSoup(requests.get(url,headers=UA,timeout=10).text,"html.parser")
-    og   = soup.find("meta",property="og:image")
-    if og and og["content"].startswith("https://"):
-        return og["content"].replace("_SX160_","_SX600_")
-    return ""                       # ← 取れなければ空文字で返す
+    try:
+        soup = BeautifulSoup(requests.get(url,headers=UA,timeout=10).text,"html.parser")
+        og   = soup.find("meta",property="og:image")
+        if og and "http" in og["content"]:
+            return og["content"].replace("_SX160_","_SX600_")
+    except Exception:
+        pass
+    return ""
 
 def fetch_amazon(limit=20):
-    base = "https://www.amazon.co.jp"
     soup = BeautifulSoup(
-        requests.get(f"{base}/gp/bestsellers/books/2278488051",
+        requests.get("https://www.amazon.co.jp/gp/bestsellers/books/2278488051",
                      headers=UA,timeout=10).text,"html.parser")
     for rank, div in enumerate(soup.select("div.zg-grid-general-faceout")[:limit],1):
         img   = div.select_one("img[alt]")
-        title = img["alt"].strip() if img else f"Rank{rank}"
+        title = img["alt"].strip() if img else f"A-Rank{rank}"
         a_tag = div.find_parent("a") or div.select_one("a[href]")
-        href  = urljoin(base, a_tag["href"]) if a_tag else base
+        href  = urljoin("https://www.amazon.co.jp", a_tag["href"]) if a_tag else ""
         yield {"store":"Amazon","cat":"コミック売れ筋","rank":rank,
                "title":title,"url":href,"thumb":amazon_thumb(href)}
 
@@ -89,12 +95,12 @@ def fetch_cmoa(cat, url, limit=20):
         yield {"store":"Cmoa","cat":cat,"rank":i,
                "title":title,"url":href,"thumb":cmoa_thumb(li)}
 
-CATS = [("総合","https://www.cmoa.jp/search/purpose/ranking/all/"),
-        ("少年マンガ","https://www.cmoa.jp/search/purpose/ranking/boy/"),
-        ("青年マンガ","https://www.cmoa.jp/search/purpose/ranking/gentle/"),
-        ("ライトアダルト","https://www.cmoa.jp/search/purpose/ranking/sexy/")]
+CATS=[("総合","https://www.cmoa.jp/search/purpose/ranking/all/"),
+      ("少年マンガ","https://www.cmoa.jp/search/purpose/ranking/boy/"),
+      ("青年マンガ","https://www.cmoa.jp/search/purpose/ranking/gentle/"),
+      ("ライトアダルト","https://www.cmoa.jp/search/purpose/ranking/sexy/")]
 
-# ---------- main ----------
+# ---------- Main ----------
 if __name__ == "__main__":
     print("=== START", dt.datetime.now())
     for r in fetch_amazon():
