@@ -103,3 +103,17 @@ if __name__ == "__main__":
             time.sleep(0.5)
 
     print("=== DONE:", dt.datetime.now(), "===")
+
+# ── ★ この３ブロックを追加して “行数” を見る ─────────────────
+rows = list(fetch_amazon())
+print("AMAZON rows =", len(rows))
+for r in rows[:3]:
+    print(r)
+
+rows = list(fetch_cmoa("総合", "https://www.cmoa.jp/search/purpose/ranking/all/"))
+print("CMOA rows =", len(rows))
+for r in rows[:3]:
+    print(r)
+
+exit()     # ← Notion 送信前にいったん終了
+# ────────────────────────────────────────────────
