@@ -31,20 +31,32 @@ def upsert(row):
         "Rank":     {"number":row["rank"]},
         "Title":    {"title":[{"text":{"content":row["title"]}}]},
         "URL":      {"url":row["url"]},
-        "Thumb":    {"files":[{"type":"external","name":"thumb",
-                               "external":{"url":row["thumb"]}}]}
+        # 🔽 ここを name なしの形式に変更
+        "Thumb":    {"files":[{
+            "type":"external",
+            "external":{"url":row["thumb"]}
+        }]}
     }
-    body = {"properties":props,
-            "cover":{"type":"external",
-                     "external":{"url":row["thumb"]}}}
+    body = {
+        "properties": props,
+        "cover": {                      # ← Cover は従来どおり
+            "type": "external",
+            "external": {"url": row["thumb"]}
+        }
+    }
 
     hit = query_page(row["store"], row["cat"], row["rank"])
-    resp = (requests.patch if hit else requests.post)(
-        f"https://api.notion.com/v1/pages/{hit[0]['id']}" if hit
-        else "https://api.notion.com/v1/pages",
-        headers=HEAD,
-        json=body | ({} if hit else {"parent":{"database_id":DB_ID}}),
-        timeout=10)
+    if hit:   # 既存行 → PATCH
+        pid = hit[0]["id"]
+        resp = requests.patch(
+            f"https://api.notion.com/v1/pages/{pid}",
+            headers=HEAD, json=body, timeout=10)
+    else:     # 新規行 → POST
+        body["parent"] = {"database_id": DB_ID}
+        resp = requests.post(
+            "https://api.notion.com/v1/pages",
+            headers=HEAD, json=body, timeout=10)
+
     print("Notion-API:", resp.status_code, resp.text[:120])
     resp.raise_for_status()
 
