@@ -51,25 +51,34 @@ def upsert(row):
         requests.post("https://api.notion.com/v1/pages",
                       headers=HEAD, json=body, timeout=10).raise_for_status()
 
-#─── Amazon ───────────────────────────────────────────────────
+#── Amazon ─────────────────────────────────────────────
+from urllib.parse import urljoin
+
 def amazon_thumb(detail_url):
-    html = requests.get(detail_url, headers=UA, timeout=10).text
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(
+        requests.get(detail_url, headers=UA, timeout=10).text, "html.parser")
     meta = soup.find("meta", property="og:image")
-    if meta and meta["content"].startswith("https://"):
-        # 大サイズに置換 例: ..._SX160_ → _SX800_
-        return meta["content"].replace("_SX160_", "_SX800_")
-    return ""
+    return meta["content"].replace("_SX160_", "_SX800_") if meta else ""
 
 def fetch_amazon(limit=20):
-    url = "https://www.amazon.co.jp/gp/bestsellers/books/2278488051"
-    soup = BeautifulSoup(requests.get(url, headers=UA, timeout=10).text,"html.parser")
+    url  = "https://www.amazon.co.jp/gp/bestsellers/books/2278488051"
+    html = requests.get(url, headers=UA, timeout=10).text
+    soup = BeautifulSoup(html, "html.parser")
+
     for rank, div in enumerate(soup.select("div.zg-grid-general-faceout")[:limit], 1):
-        a     = div.find_parent("a", class_="a-link-normal")
-        href  = "https://www.amazon.co.jp" + a["href"]
-        title = div.select_one("img[alt]")["alt"].strip()
-        yield {"store":"Amazon","cat":"コミック売れ筋","rank":rank,
-               "title":title,"url":href,"thumb":amazon_thumb(href)}
+        # ① タイトル
+        img   = div.select_one("img[alt]")
+        title = img["alt"].strip() if img else f"Rank{rank}"
+
+        # ② 作品ページ URL を安全に取得
+        parent_a = div.find_parent("a", class_="a-link-normal")
+        inner_a  = div.select_one("a[href]")
+        href_tag = parent_a or inner_a
+        href     = urljoin("https://www.amazon.co.jp",
+                           href_tag["href"]) if href_tag else url  # フォールバック
+
+        yield {"store":"Amazon", "cat":"コミック売れ筋", "rank":rank,
+               "title":title, "url":href, "thumb":amazon_thumb(href)}
 
 #─── Cmoa ────────────────────────────────────────────────────
 def cmoa_thumb(li):
