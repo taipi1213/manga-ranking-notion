@@ -84,17 +84,14 @@ def upsert(row):
     status = "with img" if img_ok else "no img "
     print(f"✅ {row['title'][:28]} ({status})")
 
-# ── Amazon ───────────────────────────────────────────
-def amazon_thumb(detail):
-    try:
-        s = BeautifulSoup(requests.get(detail, headers=UA, timeout=10).text,
-                          "html.parser")
-        og = s.find("meta", property="og:image")
-        if og and "https://" in og["content"]:
-            return og["content"].replace("_SX160_", "_SX600_")
-    except Exception:
-        pass
-    return ""
+# --- 置き換え：amazon_thumb() と fetch_amazon() -----------------
+def amazon_thumb_from_list(div):
+    img = div.select_one("img[src]")
+    if not img:
+        return ""
+    url = img["src"]
+    # 例 …._AC_SY200_.jpg → _SX600_.jpg に差し替え
+    return re.sub(r"_AC_[^_.]+_", "_SX600_", url)
 
 def fetch_amazon(limit=20):
     base = "https://www.amazon.co.jp"
@@ -106,8 +103,9 @@ def fetch_amazon(limit=20):
         title = img["alt"].strip() if img else f"A-Rank{rank}"
         a_tag = div.find_parent("a") or div.select_one("a[href]")
         href  = urljoin(base, a_tag["href"]) if a_tag else base
+        thumb = amazon_thumb_from_list(div)
         yield {"store":"Amazon","cat":"コミック売れ筋","rank":rank,
-               "title":title,"url":href,"thumb":amazon_thumb(href)}
+               "title":title,"url":href,"thumb":thumb}
 
 # ── コミックシーモア ──────────────────────────────
 def cmoa_thumb(li):
