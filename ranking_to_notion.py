@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """Daily manga ranking → Notion DB
-改訂版 2025‑06‑28
-• 429 / 5xx リトライ & 詳細ログ
-• 4xx を握り潰さず raise
-• DEBUG=1 で環境変数・レスポンス全文出力
+改訂版 2025-06-28  (UA ヘッダの Unicode 問題を修正)
 """
 
 import os, time, datetime as dt, re, sys, json, requests
@@ -25,10 +22,14 @@ HEAD: Dict[str, str] = {
     "Content-Type": "application/json",
     "Accept": "application/json",
 }
+
+# Amazon へのアクセスで UnicodeEncodeError が出るのは
+# HTTP ヘッダに Latin‑1 に入らない文字が混ざっている時。
+# Accept‑Language などを送らず、一番シンプルな UA だけにする。
 UA = {
-    "User-Agent": "Mozilla/5.0 (compatible; ranking‑bot/1.0; +https://github.com/yourrepo)",
-    "Accept-Language": "ja-JP,ja;q=0.9",
+    "User-Agent": "Mozilla/5.0 (compatible; rankingbot/1.0)"
 }
+
 TODAY = dt.date.today().isoformat()
 HTTPS_IMG = re.compile(r"^https://.*\.(?:jpe?g|png|webp)$", re.I)
 
@@ -38,24 +39,21 @@ def notion_request(method, url: str, **kw) -> requests.Response:
     """リトライ付きリクエスト。4xx は詳細を表示して raise。"""
     for retry in range(3):
         resp = method(url, headers=HEAD, timeout=10, **kw)
-        # 429 or 5xx →指数バックオフ
         if resp.status_code in (429, 502, 503):
             delay = 2 ** retry
             print(f"🔄 {resp.status_code} Retrying after {delay}s …")
             time.sleep(delay)
             continue
-        break  # 成功あるいは 4xx
+        break
 
     if not resp.ok:
-        # エラー内容を標準出力へ
         print("❌", resp.status_code)
         if DEBUG:
             print(resp.text)
-        # raise でスタックトレースを得る
         resp.raise_for_status()
     return resp
 
-# File オブジェクト生成
+
 def file_obj(url: str) -> Dict:
     return {
         "type": "external",
@@ -63,7 +61,7 @@ def file_obj(url: str) -> Dict:
         "external": {"url": url},
     }
 
-# 既存ページ検索
+
 def query_page(store: str, cat: str, rank: int) -> List[Dict]:
     q = {
         "filter": {
@@ -82,7 +80,7 @@ def query_page(store: str, cat: str, rank: int) -> List[Dict]:
     )
     return r.json().get("results", [])
 
-# ページ作成 / 更新
+
 def upsert(row: Dict):
     img_ok = HTTPS_IMG.match(row["thumb"]) is not None
     props = {
@@ -117,6 +115,7 @@ def amazon_thumb(div):
         return ""
     return re.sub(r"_AC_[^_.]+_", "_SX600_", img["src"])
 
+
 def fetch_amazon() -> Iterator[Dict]:
     base = "https://www.amazon.co.jp"
     html = requests.get(f"{base}/gp/bestsellers/books/2278488051", headers=UA, timeout=10).text
@@ -141,6 +140,7 @@ def cmoa_thumb(li):
         return ""
     src = img["src"]
     return "https:" + src if src.startswith("//") else src
+
 
 def fetch_cmoa(cat: str, url: str) -> Iterator[Dict]:
     html = requests.get(url, headers=UA, timeout=10).text
