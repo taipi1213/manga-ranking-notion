@@ -8,10 +8,10 @@ DB_ID = os.environ["NOTION_DB"]
 HEAD  = {"Authorization": f"Bearer {TOKEN}",
          "Notion-Version":"2022-06-28",
          "Content-Type":"application/json"}
-UA    = {"User-Agent":"Mozilla/5.0","Accept-Language":"ja-JP,ja;q=0.9"}
+UA = {"User-Agent":"Mozilla/5.0","Accept-Language":"ja-JP,ja;q=0.9"}
 TODAY = dt.date.today().isoformat()
 
-# ---------- Notion upsert ----------
+# ---------- Notion helper ----------
 def query_page(store, cat, rank):
     q = {"filter":{"and":[
         {"property":"Date","date":{"equals":TODAY}},
@@ -24,38 +24,33 @@ def query_page(store, cat, rank):
     return r.json()["results"]
 
 def upsert(row):
+    has_thumb = row["thumb"].startswith("http")
     props = {
         "Date":     {"date":{"start":TODAY}},
         "Store":    {"select":{"name":row["store"]}},
         "Category": {"select":{"name":row["cat"]}},
         "Rank":     {"number":row["rank"]},
         "Title":    {"title":[{"text":{"content":row["title"]}}]},
-        "URL":      {"url":row["url"]},
-        # 🔽 ここを name なしの形式に変更
-        "Thumb":    {"files":[{
+        "URL":      {"url":row["url"]}
+    }
+    if has_thumb:
+        props["Thumb"] = {"files":[{
             "type":"external",
             "external":{"url":row["thumb"]}
         }]}
-    }
-    body = {
-        "properties": props,
-        "cover": {                      # ← Cover は従来どおり
-            "type": "external",
-            "external": {"url": row["thumb"]}
-        }
-    }
+    body = {"properties":props}
+    if has_thumb:
+        body["cover"] = {"type":"external","external":{"url":row["thumb"]}}
 
     hit = query_page(row["store"], row["cat"], row["rank"])
-    if hit:   # 既存行 → PATCH
-        pid = hit[0]["id"]
-        resp = requests.patch(
-            f"https://api.notion.com/v1/pages/{pid}",
-            headers=HEAD, json=body, timeout=10)
-    else:     # 新規行 → POST
-        body["parent"] = {"database_id": DB_ID}
-        resp = requests.post(
-            "https://api.notion.com/v1/pages",
-            headers=HEAD, json=body, timeout=10)
+    if hit:
+        pid  = hit[0]["id"]
+        resp = requests.patch(f"https://api.notion.com/v1/pages/{pid}",
+                              headers=HEAD, json=body, timeout=10)
+    else:
+        body["parent"] = {"database_id":DB_ID}
+        resp = requests.post("https://api.notion.com/v1/pages",
+                             headers=HEAD, json=body, timeout=10)
 
     print("Notion-API:", resp.status_code, resp.text[:120])
     resp.raise_for_status()
@@ -64,17 +59,20 @@ def upsert(row):
 def amazon_thumb(url):
     soup = BeautifulSoup(requests.get(url,headers=UA,timeout=10).text,"html.parser")
     og   = soup.find("meta",property="og:image")
-    return og["content"].replace("_SX160_","_SX800_") if og else ""
+    if og and og["content"].startswith("https://"):
+        return og["content"].replace("_SX160_","_SX600_")
+    return ""                       # ← 取れなければ空文字で返す
 
 def fetch_amazon(limit=20):
+    base = "https://www.amazon.co.jp"
     soup = BeautifulSoup(
-        requests.get("https://www.amazon.co.jp/gp/bestsellers/books/2278488051",
+        requests.get(f"{base}/gp/bestsellers/books/2278488051",
                      headers=UA,timeout=10).text,"html.parser")
     for rank, div in enumerate(soup.select("div.zg-grid-general-faceout")[:limit],1):
         img   = div.select_one("img[alt]")
         title = img["alt"].strip() if img else f"Rank{rank}"
-        href  = urljoin("https://www.amazon.co.jp",
-                        (div.find_parent("a") or div.select_one("a[href]"))["href"])
+        a_tag = div.find_parent("a") or div.select_one("a[href]")
+        href  = urljoin(base, a_tag["href"]) if a_tag else base
         yield {"store":"Amazon","cat":"コミック売れ筋","rank":rank,
                "title":title,"url":href,"thumb":amazon_thumb(href)}
 
@@ -91,11 +89,12 @@ def fetch_cmoa(cat, url, limit=20):
         yield {"store":"Cmoa","cat":cat,"rank":i,
                "title":title,"url":href,"thumb":cmoa_thumb(li)}
 
-CATS=[("総合","https://www.cmoa.jp/search/purpose/ranking/all/"),
-      ("少年マンガ","https://www.cmoa.jp/search/purpose/ranking/boy/"),
-      ("青年マンガ","https://www.cmoa.jp/search/purpose/ranking/gentle/"),
-      ("ライトアダルト","https://www.cmoa.jp/search/purpose/ranking/sexy/")]
+CATS = [("総合","https://www.cmoa.jp/search/purpose/ranking/all/"),
+        ("少年マンガ","https://www.cmoa.jp/search/purpose/ranking/boy/"),
+        ("青年マンガ","https://www.cmoa.jp/search/purpose/ranking/gentle/"),
+        ("ライトアダルト","https://www.cmoa.jp/search/purpose/ranking/sexy/")]
 
+# ---------- main ----------
 if __name__ == "__main__":
     print("=== START", dt.datetime.now())
     for r in fetch_amazon():
