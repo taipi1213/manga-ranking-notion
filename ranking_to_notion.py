@@ -107,28 +107,38 @@ def upsert(row: Dict) -> None:
     ensure_option("Store", row["store"])
     ensure_option("Category", row["cat"])
 
-    img_ok = bool(HTTPS_IMG.match(row["thumb"]))
+    img_ok = HTTPS_IMG.match(row["thumb"]) is not None
+
     props = {
-        "Date": {"date": {"start": TODAY}},
-        "Store": {"select": {"name": row["store"]}},
-        "Category": {"select": {"name": row["cat"]}},
-        "Rank": {"number": row["rank"]},
-        "Title": {"title": [{"text": {"content": row["title"]}}]},
-        "URL": {"url": row["url"]},
-        "Thumb": {"files": [file_obj(row["thumb"])] if img_ok else []},
+        "Date":      {"date":   {"start": TODAY}},
+        "Store":     {"select": {"name": row["store"]}},
+        "Category":  {"select": {"name": row["cat"]}},
+        "Rank":      {"number": row["rank"]},
+        "Title":     {"title":  [{"text": {"content": row["title"]}}]},
+        "URL":       {"url":    row["url"]},
+        # ← ★ ここを URL プロパティとして渡す ★
+        "Thumb":     {"url":    row["thumb"] if img_ok else ""},
     }
 
     body = {"properties": props}
+
+    # page の cover は従来どおり File Object で OK
     if img_ok:
-        body["cover"] = cover_obj(row["thumb"])
+        body["cover"] = {
+            "type": "external",
+            "external": {"url": row["thumb"]}
+        }
 
     hit = query(row["store"], row["cat"], row["rank"])
     if hit:
-        notion(requests.patch, f"https://api.notion.com/v1/pages/{hit[0]['id']}", json=body)
+        notion(requests.patch,
+               f"https://api.notion.com/v1/pages/{hit[0]['id']}",
+               json=body)
     else:
         body["parent"] = {"database_id": DB_ID}
-        notion(requests.post, "https://api.notion.com/v1/pages", json=body)
-
+        notion(requests.post,
+               "https://api.notion.com/v1/pages",
+               json=body)
     print("✅", row["title"][:30])
 
 # ───────────────────────── スクレイパ
