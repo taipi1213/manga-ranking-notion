@@ -1,7 +1,9 @@
 name: Daily Manga Ranking
+
 on:
   schedule:
-    - cron: '0 22 * * *'     # 07:00 JST
+    # 11:00 JST 毎日実行（GitHub Actions は UTC 解釈なので 02:00）
+    - cron: '0 2 * * *'
   workflow_dispatch:
 
 jobs:
