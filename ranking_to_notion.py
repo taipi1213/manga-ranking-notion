@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Daily manga ranking → Notion DB
-改訂版 2025-07-01  (JST 11 時実行対応)
+改訂版 2025-07-01   JST 11 時実行 & Latest✅ 対応
 
-・Amazon／コミックシーモアから20位まで取得
-・Notion Select オプションを自動追加
-・cover 用 FileObject は name を含めない
-・429／5xx リトライ、4xx で詳細ログ出力
+■ 変更点
+ 1. JST の「今日」を ZoneInfo で取得
+ 2. Checkbox プロパティ `Latest` を自動追加
+ 3. 実行のたびに前回の Latest を一括で False にし、
+    取り込む行だけ True に設定
+ 4. Amazon／コミックシーモア 20 位まで取得は従来どおり
 """
+
+from __future__ import annotations
 
 import os
 import sys
@@ -15,7 +19,7 @@ import time
 import datetime as dt
 from typing import Dict, Iterator, List
 from urllib.parse import urljoin
-from zoneinfo import ZoneInfo        # ← 追加
+from zoneinfo import ZoneInfo
 
 import requests
 from bs4 import BeautifulSoup
@@ -26,21 +30,17 @@ DB_ID = os.getenv("NOTION_DB")
 if not (TOKEN and DB_ID):
     sys.exit("❌ NOTION_TOKEN / NOTION_DB が未設定です。")
 
-DEBUG = bool(int(os.getenv("DEBUG", "0")))
-
-# ───────────────────────── HTTP ヘッダ
+# ───────────────────────── 定数
 HEAD: Dict[str, str] = {
     "Authorization": f"Bearer {TOKEN}",
     "Notion-Version": "2022-06-28",
     "Content-Type": "application/json",
     "Accept": "application/json",
 }
-UA = {"User-Agent": "Mozilla/5.0 (compatible; rankingbot/1.2)"}
+UA = {"User-Agent": "Mozilla/5.0 (compatible; rankingbot/2.0)"}
 
-# ───────────────────────── JST の「今日」
 JST = ZoneInfo("Asia/Tokyo")
 TODAY = dt.datetime.now(JST).date().isoformat()
-
 HTTPS_IMG = re.compile(r"^https://.*\.(?:jpe?g|png|webp)$", re.I)
 
 # ───────────────────────── Notion API ラッパ
@@ -64,9 +64,8 @@ def notion(method, url: str, **kw) -> requests.Response:
         resp.raise_for_status()
     return resp
 
-# ───────────────────────── Select オプション保証
-def ensure_option(prop: str, name: str) -> None:
-    """Select プロパティに name が無ければ動的追加"""
+# ───────────────────────── プロパティ保証ヘルパ
+def ensure_select(prop: str, name: str) -> None:
     db = notion(requests.get, f"https://api.notion.com/v1/databases/{DB_ID}").json()
     opts = db["properties"][prop]["select"]["options"]
     if name in {o["name"] for o in opts}:
@@ -76,16 +75,31 @@ def ensure_option(prop: str, name: str) -> None:
     notion(requests.patch, f"https://api.notion.com/v1/databases/{DB_ID}", json=patch)
     print(f"➕ Added option '{name}' to {prop}")
 
-# ───────────────────────── File／Cover ヘルパ
-file_obj = lambda u: {  # noqa: E731
-    "type": "external",
-    "name": u.split("/")[-1],
-    "external": {"url": u},
-}
-cover_obj = lambda u: {  # noqa: E731
-    "type": "external",
-    "external": {"url": u},
-}
+def ensure_checkbox(prop: str) -> None:
+    db = notion(requests.get, f"https://api.notion.com/v1/databases/{DB_ID}").json()
+    if prop in db["properties"]:
+        return
+    patch = {"properties": {prop: {"checkbox": {}}}}
+    notion(requests.patch, f"https://api.notion.com/v1/databases/{DB_ID}", json=patch)
+    print(f"🆕 Checkbox '{prop}' created")
+
+# ───────────────────────── Latest フラグ操作
+def clear_latest() -> None:
+    """前回付けた Latest✅ をすべて外す"""
+    payload = {"filter": {"property": "Latest", "checkbox": {"equals": True}}}
+    res = notion(
+        requests.post,
+        f"https://api.notion.com/v1/databases/{DB_ID}/query",
+        json=payload,
+    ).json()
+    for page in res.get("results", []):
+        notion(
+            requests.patch,
+            f"https://api.notion.com/v1/pages/{page['id']}",
+            json={"properties": {"Latest": {"checkbox": False}}},
+        )
+    if res.get("results"):
+        print(f"↩️  Cleared {len(res['results'])} Latest flags")
 
 # ───────────────────────── 既存ページ検索
 def query(store: str, cat: str, rank: int) -> List[Dict]:
@@ -108,8 +122,8 @@ def query(store: str, cat: str, rank: int) -> List[Dict]:
 
 # ───────────────────────── ページ UPSERT
 def upsert(row: Dict) -> None:
-    ensure_option("Store", row["store"])
-    ensure_option("Category", row["cat"])
+    ensure_select("Store", row["store"])
+    ensure_select("Category", row["cat"])
 
     img_ok = HTTPS_IMG.match(row["thumb"]) is not None
 
@@ -121,23 +135,31 @@ def upsert(row: Dict) -> None:
         "Title":     {"title":  [{"text": {"content": row["title"]}}]},
         "URL":       {"url":    row["url"]},
         "Thumb":     {"url":    row["thumb"] if img_ok else ""},
+        "Latest":    {"checkbox": True},                 # ← 追加
     }
 
     body = {"properties": props}
 
     if img_ok:
-        body["cover"] = cover_obj(row["thumb"])
+        body["cover"] = {
+            "type": "external",
+            "external": {"url": row["thumb"]},
+        }
 
     hit = query(row["store"], row["cat"], row["rank"])
     if hit:
-        notion(requests.patch,
-               f"https://api.notion.com/v1/pages/{hit[0]['id']}",
-               json=body)
+        notion(
+            requests.patch,
+            f"https://api.notion.com/v1/pages/{hit[0]['id']}",
+            json=body,
+        )
     else:
         body["parent"] = {"database_id": DB_ID}
-        notion(requests.post,
-               "https://api.notion.com/v1/pages",
-               json=body)
+        notion(
+            requests.post,
+            "https://api.notion.com/v1/pages",
+            json=body,
+        )
     print("✅", row["title"][:30])
 
 # ───────────────────────── スクレイパ
@@ -147,7 +169,9 @@ def amazon_thumb(div):
 
 def fetch_amazon() -> Iterator[Dict]:
     url = "https://www.amazon.co.jp/gp/bestsellers/books/2278488051"
-    soup = BeautifulSoup(requests.get(url, headers=UA, timeout=10).text, "html.parser")
+    soup = BeautifulSoup(
+        requests.get(url, headers=UA, timeout=10).text, "html.parser"
+    )
     for rank, div in enumerate(soup.select("div.zg-grid-general-faceout")[:20], 1):
         title = div.select_one("img[alt]")["alt"].strip()
         href = urljoin(
@@ -171,8 +195,12 @@ def cmoa_thumb(li):
     return "https:" + src if src.startswith("//") else src
 
 def fetch_cmoa(cat: str, url: str) -> Iterator[Dict]:
-    soup = BeautifulSoup(requests.get(url, headers=UA, timeout=10).text, "html.parser")
-    for rank, li in enumerate(soup.select("ul#ranking_result_list li.search_result_box")[:20], 1):
+    soup = BeautifulSoup(
+        requests.get(url, headers=UA, timeout=10).text, "html.parser"
+    )
+    for rank, li in enumerate(
+        soup.select("ul#ranking_result_list li.search_result_box")[:20], 1
+    ):
         title = li.select_one("img[alt]")["alt"].strip()
         href = urljoin("https://www.cmoa.jp", li.select_one("a.title")["href"])
         yield {
@@ -194,6 +222,12 @@ CATS = [
 # ───────────────────────── Main
 if __name__ == "__main__":
     print("=== START", dt.datetime.now(JST))
+
+    # 1) チェックボックス列を保証
+    ensure_checkbox("Latest")
+    # 2) 前回の Latest✅ を全解除
+    clear_latest()
+
     try:
         # Amazon
         for row in fetch_amazon():
