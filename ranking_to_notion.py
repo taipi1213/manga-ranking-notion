@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Daily manga ranking → Notion DB
-改訂版 2025-06-28
+改訂版 2025-07-01  (JST 11 時実行対応)
 
 ・Amazon／コミックシーモアから20位まで取得
 ・Notion Select オプションを自動追加
@@ -15,6 +15,7 @@ import time
 import datetime as dt
 from typing import Dict, Iterator, List
 from urllib.parse import urljoin
+from zoneinfo import ZoneInfo        # ← 追加
 
 import requests
 from bs4 import BeautifulSoup
@@ -36,7 +37,10 @@ HEAD: Dict[str, str] = {
 }
 UA = {"User-Agent": "Mozilla/5.0 (compatible; rankingbot/1.2)"}
 
-TODAY = dt.date.today().isoformat()
+# ───────────────────────── JST の「今日」
+JST = ZoneInfo("Asia/Tokyo")
+TODAY = dt.datetime.now(JST).date().isoformat()
+
 HTTPS_IMG = re.compile(r"^https://.*\.(?:jpe?g|png|webp)$", re.I)
 
 # ───────────────────────── Notion API ラッパ
@@ -116,18 +120,13 @@ def upsert(row: Dict) -> None:
         "Rank":      {"number": row["rank"]},
         "Title":     {"title":  [{"text": {"content": row["title"]}}]},
         "URL":       {"url":    row["url"]},
-        # ← ★ ここを URL プロパティとして渡す ★
         "Thumb":     {"url":    row["thumb"] if img_ok else ""},
     }
 
     body = {"properties": props}
 
-    # page の cover は従来どおり File Object で OK
     if img_ok:
-        body["cover"] = {
-            "type": "external",
-            "external": {"url": row["thumb"]}
-        }
+        body["cover"] = cover_obj(row["thumb"])
 
     hit = query(row["store"], row["cat"], row["rank"])
     if hit:
@@ -194,7 +193,7 @@ CATS = [
 
 # ───────────────────────── Main
 if __name__ == "__main__":
-    print("=== START", dt.datetime.now())
+    print("=== START", dt.datetime.now(JST))
     try:
         # Amazon
         for row in fetch_amazon():
@@ -210,4 +209,4 @@ if __name__ == "__main__":
         print("🚨", e)
         raise
     finally:
-        print("=== DONE ", dt.datetime.now())
+        print("=== DONE ", dt.datetime.now(JST))
